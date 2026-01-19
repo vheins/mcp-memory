@@ -1,9 +1,10 @@
-#!/usr/bin/env node
-
 import readline from "node:readline";
 import fetch from "node-fetch";
 import dotenv from "dotenv";
+
 dotenv.config();
+
+const DEFAULT_URL = "http://localhost:8000/api/v1/mcp/memory";
 
 const rl = readline.createInterface({
     input: process.stdin,
@@ -14,88 +15,66 @@ const rl = readline.createInterface({
 rl.on("line", async (line) => {
     if (!line.trim()) return;
 
-    const msg = JSON.parse(line);
+    try {
+        const msg = JSON.parse(line);
 
-    if (msg.method === "initialize") {
-        const url = process.env.MCP_MEMORY_URL;
-        const token = process.env.MCP_MEMORY_TOKEN;
-        let result = null;
-        try {
-            const res = await fetch(url, {
-                method: "POST",
-                headers: {
-                    "Authorization": `Bearer ${token}`,
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify({
-                    jsonrpc: "2.0",
-                    method: "initialize",
-                    params: {},
-                    id: 1
-                })
-            });
-            const data = await res.json();
-            result = data.result;
-        } catch (e) {
-            console.error("API ERROR:", e);
+        if (msg.method === "initialize") {
+            process.stdout.write(
+                JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { success: true } }) +
+                "\n"
+            );
+            return;
         }
-        process.stdout.write(JSON.stringify({
-            jsonrpc: "2.0",
-            id: msg.id,
-            result
-        }) + "\n");
-        return;
-    }
 
+        async function forwardToMCP(method, params, id) {
+            const url = process.env.MCP_MEMORY_URL || DEFAULT_URL;
+            const token = process.env.MCP_MEMORY_TOKEN || "";
+            let result = null,
+                error = null;
+            try {
+                const headers = {
+                    "Content-Type": "application/json",
+                    Accept: "application/json"
+                };
+                if (token) headers["Authorization"] = `Bearer ${token}`;
 
+                const res = await fetch(url, {
+                    method: "POST",
+                    headers,
+                    body: JSON.stringify({ jsonrpc: "2.0", method, params, id })
+                });
 
-    // Helper to forward JSON-RPC to MCP API
-    async function forwardToMCP(method, params, id) {
-        const url = process.env.MCP_MEMORY_URL;
-        const token = process.env.MCP_MEMORY_TOKEN;
-        let result = null, error = null;
-        try {
-            const res = await fetch(url, {
-                method: "POST",
-                headers: {
-                    "Authorization": `Bearer ${token}`,
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify({ jsonrpc: "2.0", method, params, id: 1 })
-            });
-            const data = await res.json();
-            result = data.result;
-            error = data.error;
-        } catch (e) {
-            console.error("API ERROR:", e);
-            error = { message: e.message };
+                const text = await res.text();
+                let data = null;
+                try {
+                    data = JSON.parse(text);
+                } catch (e) {
+                    error = { code: -32000, message: "Invalid JSON response from server" };
+                }
+
+                if (!error) {
+                    if (!res.ok) {
+                        const message = (data && (data.message || data.error?.message)) || "HTTP error";
+                        const code = res.status || data?.error?.code || -32001;
+                        error = { code, message };
+                    } else {
+                        result = data?.result ?? null;
+                        error = data?.error ?? null;
+                    }
+                }
+            } catch (e) {
+                error = { code: -32002, message: e.message };
+            }
+            process.stdout.write(
+                JSON.stringify({ jsonrpc: "2.0", id, ...(error ? { error } : { result }) }) + "\n"
+            );
         }
-        process.stdout.write(JSON.stringify({
-            jsonrpc: "2.0",
-            id,
-            ...(error ? { error } : { result })
-        }) + "\n");
-    }
 
-    if (msg.method === "memory.store") {
-        // Deprecated, but keep for compatibility
-        await forwardToMCP("memory.store", msg.params, msg.id);
+        // Forward any JSON-RPC method other than initialize as-is
+        const { method, params, id } = msg;
+        await forwardToMCP(method, params, id);
         return;
+    } catch (e) {
+        process.stderr.write(`Parse error: ${e.message}\n`);
     }
-
-    if (msg.method === "memory.write") {
-        await forwardToMCP("memory.write", msg.params, msg.id);
-        return;
-    }
-
-    if (msg.method === "memory.delete") {
-        await forwardToMCP("memory.delete", msg.params, msg.id);
-        return;
-    }
-
-    if (msg.method === "memory.search") {
-        await forwardToMCP("memory.search", msg.params, msg.id);
-        return;
-    }
-
 });
