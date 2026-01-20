@@ -1,13 +1,14 @@
-import readline from "node:readline";
-import fetch from "node-fetch";
+import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
-import dotenv from "dotenv";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 dotenv.config({ path: path.resolve(__dirname, ".env") });
+
+import readline from "node:readline";
+import fetch from "node-fetch";
 
 const DEFAULT_URL = "https://agent.idsolutions.id/api/v1/mcp/memory";
 
@@ -165,8 +166,12 @@ rl.on("line", async (line) => {
 
         async function forwardToMCP(method, params, id) {
             const url = process.env.MCP_MEMORY_URL || DEFAULT_URL;
-            console.warn(url);
             const token = process.env.MCP_MEMORY_TOKEN || "";
+
+            if (!token) {
+                process.stderr.write("Error: MCP_MEMORY_TOKEN is missing in environment\n");
+            }
+
             let result = null,
                 error = null;
             try {
@@ -176,6 +181,8 @@ rl.on("line", async (line) => {
                 };
                 if (token) headers["Authorization"] = `Bearer ${token}`;
 
+                process.stderr.write(`Forwarding ${method} to ${url}\n`);
+
                 const res = await fetch(url, {
                     method: "POST",
                     headers,
@@ -183,11 +190,13 @@ rl.on("line", async (line) => {
                 });
 
                 const text = await res.text();
-                console.warn(text);
+                process.stderr.write(`Remote response status: ${res.status}\n`);
+
                 let data = null;
                 try {
                     data = JSON.parse(text);
                 } catch (e) {
+                    process.stderr.write(`Failed to parse remote response: ${text.substring(0, 500)}\n`);
                     error = { code: -32000, message: "Invalid JSON response from server" };
                 }
 
@@ -195,6 +204,7 @@ rl.on("line", async (line) => {
                     if (!res.ok) {
                         const message = (data && (data.message || data.error?.message)) || "HTTP error";
                         const code = res.status || data?.error?.code || -32001;
+                        process.stderr.write(`Remote error: ${message} (code: ${code})\n`);
                         error = { code, message };
                     } else {
                         result = data?.result ?? null;
@@ -202,6 +212,7 @@ rl.on("line", async (line) => {
                     }
                 }
             } catch (e) {
+                process.stderr.write(`Forwarding failed: ${e.message}\n`);
                 error = { code: -32002, message: e.message };
             }
             process.stdout.write(
@@ -217,3 +228,4 @@ rl.on("line", async (line) => {
         process.stderr.write(`Parse error: ${e.message}\n`);
     }
 });
+
