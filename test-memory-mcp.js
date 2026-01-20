@@ -49,7 +49,10 @@ function startMockBackend() {
         if (name === "memory-write") {
             const content = {
                 user_id: userId,
-                current_content: args.current_content ?? null
+                current_content: args.current_content ?? null,
+                organization: args.organization,
+                scope_type: args.scope_type,
+                memory_type: args.memory_type
             };
             respond({
                 jsonrpc: "2.0",
@@ -71,7 +74,24 @@ function startMockBackend() {
                 { user_id: "user-a", current_content: "User A Secret" },
                 { user_id: "user-b", current_content: "User B Secret" }
             ];
-            const filtered = all.filter((m) => m.user_id === userId);
+            // Simple mock filtering
+            // In the real backend, if a user searches with a filter for ANOTHER user, it should likely return nothing or forbidden if unauthorized.
+            // The test `testSearchScopesToAuthed` sends `filters: { user: "user-b" }` but uses token for `user-a`.
+            // The expectation is that `user-a` CANNOT see `user-b`'s secret.
+
+            let filtered = all;
+            if (args.filters?.user) {
+                // Simulate backend check: if requesting user != filter user, return empty or filtered to requesting user
+                if (args.filters.user !== userId) {
+                    // In strict mode this might be empty, but let's assume it returns what the USER owns matching the filter (which is none)
+                    filtered = all.filter(m => m.user_id === userId && m.user_id === args.filters.user);
+                } else {
+                    filtered = all.filter(m => m.user_id === args.filters.user);
+                }
+            } else {
+                filtered = all.filter(m => m.user_id === userId);
+            }
+
             respond({
                 jsonrpc: "2.0",
                 id,
@@ -88,16 +108,13 @@ function startMockBackend() {
         }
 
         if (name === "memory-delete") {
-            respond({ jsonrpc: "2.0", id, result: { success: true } });
+            // PHP test result: { id: 1 } or similar? 
+            // The test says: assertJsonPath('id', 1) checks the RPC ID, not the result body content.
+            // The test: assertSoftDeleted('memories', ...).
+            // Usually returns success.
+            respond({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: "Deleted" }] } });
             return;
         }
-
-        if (name === "memory-store") {
-            respond({ jsonrpc: "2.0", id, result: { success: true } });
-            return;
-        }
-
-        respond({ jsonrpc: "2.0", id, error: { code: -32601, message: "Tool not found" } }, 200);
     });
 
     return new Promise((resolve) => {
@@ -138,6 +155,29 @@ async function testInitialize(env) {
     const raw = await runMCP(input, env);
     const result = JSON.parse(raw);
     console.log("initialize:", JSON.stringify(result.result));
+
+    // Assertions
+    const caps = result.result.capabilities;
+    if (!caps.tools?.list || !caps.resources?.list) {
+        console.error("FAILED: Missing capabilities in hello response");
+        process.exit(1);
+    }
+    if (result.result.serverInfo.name !== "@vheins/memory-mcp") {
+        console.error("FAILED: Incorrect server name");
+        process.exit(1);
+    }
+    console.log("initialize: OK");
+
+    // Test tools/list
+    const toolsInput = { method: "tools/list", id: 2 };
+    const toolsRaw = await runMCP(toolsInput, env);
+    const toolsRes = JSON.parse(toolsRaw);
+    const toolNames = toolsRes.result.tools.map(t => t.name);
+    if (!toolNames.includes("memory-write") || !toolNames.includes("memory-delete")) {
+        console.error("FAILED: Missing expected tools", toolNames);
+        process.exit(1);
+    }
+    console.log("tools/list: OK");
 }
 
 async function testRequiresAuth(baseEnv) {
