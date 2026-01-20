@@ -64,9 +64,27 @@ const CAPABILITIES = {
                         current_content: { type: "string" },
                         repository: { type: "string" },
                         user_id: { type: "string" },
+                        title: { type: "string" },
+                        status: { type: "string" },
+                        metadata: { type: "object" },
                         created_by_type: { type: "string" }
                     },
                     required: ["organization", "scope_type", "memory_type", "current_content"]
+                }
+            },
+            {
+                name: "memory-update",
+                description: "Update an existing memory",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        id: { type: "string", description: "UUID of the memory" },
+                        title: { type: "string" },
+                        current_content: { type: "string" },
+                        status: { type: "string" },
+                        metadata: { type: "object" }
+                    },
+                    required: ["id"]
                 }
             },
             {
@@ -75,7 +93,7 @@ const CAPABILITIES = {
                 inputSchema: {
                     type: "object",
                     properties: {
-                        id: { type: "string" }
+                        id: { type: "string", description: "UUID of the memory" }
                     },
                     required: ["id"]
                 }
@@ -91,6 +109,62 @@ const CAPABILITIES = {
                         query: { type: "string" },
                         filters: { type: "object" }
                     }
+                }
+            },
+            {
+                name: "memory-bulk-write",
+                description: "Create/update multiple memories",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        items: {
+                            type: "array",
+                            items: {
+                                type: "object",
+                                properties: {
+                                    organization: { type: "string" },
+                                    scope_type: { type: "string" },
+                                    memory_type: { type: "string" },
+                                    current_content: { type: "string" },
+                                    repository: { type: "string" },
+                                    user_id: { type: "string" },
+                                    title: { type: "string" },
+                                    status: { type: "string" },
+                                    metadata: { type: "object" },
+                                    created_by_type: { type: "string" }
+                                },
+                                required: ["organization", "scope_type", "memory_type", "current_content"]
+                            }
+                        }
+                    },
+                    required: ["items"]
+                }
+            },
+            {
+                name: "memory-link",
+                description: "Create Knowledge Graph relationships",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        source_id: { type: "string", description: "UUID of the source memory" },
+                        target_id: { type: "string", description: "UUID of the target memory" },
+                        relation_type: { type: "string", default: "related" }
+                    },
+                    required: ["source_id", "target_id"]
+                }
+            },
+            {
+                name: "memory-vector-search",
+                description: "Semantic search using vectors",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        vector: { type: "array", items: { type: "number" }, description: "Array of floats" },
+                        threshold: { type: "number", default: 0.5 },
+                        repository: { type: "string" },
+                        filters: { type: "object" }
+                    },
+                    required: ["vector"]
                 }
             }
         ],

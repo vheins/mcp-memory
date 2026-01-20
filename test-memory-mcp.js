@@ -52,7 +52,34 @@ function startMockBackend() {
                 current_content: args.current_content ?? null,
                 organization: args.organization,
                 scope_type: args.scope_type,
-                memory_type: args.memory_type
+                memory_type: args.memory_type,
+                title: args.title,
+                status: args.status,
+                metadata: args.metadata
+            };
+            respond({
+                jsonrpc: "2.0",
+                id,
+                result: {
+                    content: [
+                        {
+                            type: "text",
+                            text: JSON.stringify(content)
+                        }
+                    ]
+                }
+            });
+            return;
+        }
+
+        if (name === "memory-update") {
+            const content = {
+                id: args.id,
+                user_id: userId,
+                current_content: args.current_content,
+                title: args.title,
+                status: args.status,
+                metadata: args.metadata
             };
             respond({
                 jsonrpc: "2.0",
@@ -116,11 +143,56 @@ function startMockBackend() {
         }
 
         if (name === "memory-delete") {
-            // PHP test result: { id: 1 } or similar? 
-            // The test says: assertJsonPath('id', 1) checks the RPC ID, not the result body content.
-            // The test: assertSoftDeleted('memories', ...).
-            // Usually returns success.
             respond({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: "Deleted" }] } });
+            return;
+        }
+
+        if (name === "memory-bulk-write") {
+            const items = args.items || [];
+            respond({
+                jsonrpc: "2.0",
+                id,
+                result: {
+                    content: [
+                        {
+                            type: "text",
+                            text: JSON.stringify({ count: items.length, status: "success" })
+                        }
+                    ]
+                }
+            });
+            return;
+        }
+
+        if (name === "memory-link") {
+            respond({
+                jsonrpc: "2.0",
+                id,
+                result: {
+                    content: [
+                        {
+                            type: "text",
+                            text: JSON.stringify({ source_id: args.source_id, target_id: args.target_id, relation_type: args.relation_type || "related" })
+                        }
+                    ]
+                }
+            });
+            return;
+        }
+
+        if (name === "memory-vector-search") {
+            respond({
+                jsonrpc: "2.0",
+                id,
+                result: {
+                    content: [
+                        {
+                            type: "text",
+                            text: JSON.stringify([{ id: "uuid-1", score: 0.9, content: "Vector match 1" }])
+                        }
+                    ]
+                }
+            });
             return;
         }
     });
@@ -181,9 +253,12 @@ async function testInitialize(env) {
     const toolsRaw = await runMCP(toolsInput, env);
     const toolsRes = JSON.parse(toolsRaw);
     const toolNames = toolsRes.result.tools.map(t => t.name);
-    if (!toolNames.includes("memory-write") || !toolNames.includes("memory-delete")) {
-        console.error("FAILED: Missing expected tools", toolNames);
-        process.exit(1);
+    const expectedTools = ["memory-write", "memory-delete", "memory-update", "memory-bulk-write", "memory-link", "memory-vector-search"];
+    for (const tool of expectedTools) {
+        if (!toolNames.includes(tool)) {
+            console.error(`FAILED: Missing expected tool: ${tool}`, toolNames);
+            process.exit(1);
+        }
     }
     console.log("tools/list: OK");
 }
@@ -276,6 +351,103 @@ async function testDelete(baseEnv) {
     }
 }
 
+async function testUpdate(baseEnv) {
+    const input = {
+        method: "tools/call",
+        params: {
+            name: "memory-update",
+            arguments: {
+                id: "550e8400-e29b-41d4-a716-446655440000",
+                title: "Updated Title",
+                current_content: "Updated Content"
+            }
+        },
+        id: 16
+    };
+    const raw = await runMCP(input, baseEnv);
+    const out = JSON.parse(raw);
+    if (out.error) {
+        console.error("update error:", out.error);
+    } else {
+        const text = out.result?.content?.[0]?.text || "{}";
+        const data = JSON.parse(text);
+        if (data.id === "550e8400-e29b-41d4-a716-446655440000" && data.title === "Updated Title") {
+            console.log("update: OK");
+        } else {
+            console.error("update: FAILED", data);
+        }
+    }
+}
+
+async function testBulkWrite(baseEnv) {
+    const input = {
+        method: "tools/call",
+        params: {
+            name: "memory-bulk-write",
+            arguments: {
+                items: [
+                    { organization: "org", scope_type: "user", memory_type: "fact", current_content: "Bulk 1" },
+                    { organization: "org", scope_type: "user", memory_type: "fact", current_content: "Bulk 2" }
+                ]
+            }
+        },
+        id: 17
+    };
+    const raw = await runMCP(input, baseEnv);
+    const out = JSON.parse(raw);
+    if (out.error) console.error("bulk-write error:", out.error);
+    else {
+        const data = JSON.parse(out.result.content[0].text);
+        if (data.count === 2) console.log("bulk-write: OK");
+        else console.error("bulk-write: FAILED", data);
+    }
+}
+
+async function testLink(baseEnv) {
+    const input = {
+        method: "tools/call",
+        params: {
+            name: "memory-link",
+            arguments: {
+                source_id: "src-uuid",
+                target_id: "tgt-uuid",
+                relation_type: "child_of"
+            }
+        },
+        id: 18
+    };
+    const raw = await runMCP(input, baseEnv);
+    const out = JSON.parse(raw);
+    if (out.error) console.error("link error:", out.error);
+    else {
+        const data = JSON.parse(out.result.content[0].text);
+        if (data.source_id === "src-uuid" && data.relation_type === "child_of") console.log("link: OK");
+        else console.error("link: FAILED", data);
+    }
+}
+
+async function testVectorSearch(baseEnv) {
+    const input = {
+        method: "tools/call",
+        params: {
+            name: "memory-vector-search",
+            arguments: {
+                vector: [0.1, 0.2, 0.3],
+                threshold: 0.7
+            }
+        },
+        id: 19
+    };
+    const raw = await runMCP(input, baseEnv);
+    const out = JSON.parse(raw);
+    if (out.error) console.error("vector-search error:", out.error);
+    else {
+        const data = JSON.parse(out.result.content[0].text);
+        if (Array.isArray(data) && data[0].id === "uuid-1") console.log("vector-search: OK");
+        else console.error("vector-search: FAILED", data);
+    }
+}
+
 async function testStore(baseEnv) {
     const input = {
         method: "tools/call",
@@ -303,6 +475,10 @@ async function runAllTests() {
         await testWriteScopesToAuthed(baseEnv);
         await testSearchScopesToAuthed(baseEnv);
         await testDelete(baseEnv);
+        await testUpdate(baseEnv);
+        await testBulkWrite(baseEnv);
+        await testLink(baseEnv);
+        await testVectorSearch(baseEnv);
         await testStore(baseEnv);
     } finally {
         server.close();
