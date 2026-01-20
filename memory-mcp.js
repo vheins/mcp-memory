@@ -54,34 +54,37 @@ const CAPABILITIES = {
         tools: [
             {
                 name: "memory-write",
-                description: "Write a memory",
+                description: "Create or update a memory entry. Supports facts, preferences, and business rules.",
                 inputSchema: {
                     type: "object",
                     properties: {
                         organization: { type: "string" },
-                        scope_type: { type: "string" },
-                        memory_type: { type: "string" },
+                        scope_type: { type: "string", enum: ["system", "organization", "repository", "user"] },
+                        memory_type: { type: "string", enum: ["business_rule", "decision_log", "preference", "system_constraint", "documentation", "tech_stack", "fact", "task", "architecture", "user_context", "convention", "risk"] },
                         current_content: { type: "string" },
+                        id: { type: "string", format: "uuid" },
                         repository: { type: "string" },
-                        user_id: { type: "string" },
                         title: { type: "string" },
-                        status: { type: "string" },
-                        metadata: { type: "object" },
-                        created_by_type: { type: "string" }
+                        status: { type: "string", enum: ["draft", "verified", "locked", "deprecated", "active"], default: "draft" },
+                        importance: { type: "integer", minimum: 1, maximum: 10, default: 1 },
+                        metadata: { type: "object" }
                     },
                     required: ["organization", "scope_type", "memory_type", "current_content"]
                 }
             },
             {
                 name: "memory-update",
-                description: "Update an existing memory",
+                description: "Update an existing memory entry by its UUID.",
                 inputSchema: {
                     type: "object",
                     properties: {
-                        id: { type: "string", description: "UUID of the memory" },
+                        id: { type: "string", format: "uuid" },
                         title: { type: "string" },
                         current_content: { type: "string" },
-                        status: { type: "string" },
+                        status: { type: "string", enum: ["draft", "verified", "locked", "deprecated", "active"] },
+                        scope_type: { type: "string", enum: ["system", "organization", "repository", "user"] },
+                        memory_type: { type: "string", enum: ["business_rule", "decision_log", "preference", "system_constraint", "documentation", "tech_stack", "fact", "task", "architecture", "user_context", "convention", "risk"] },
+                        importance: { type: "integer", minimum: 1, maximum: 10 },
                         metadata: { type: "object" }
                     },
                     required: ["id"]
@@ -89,82 +92,46 @@ const CAPABILITIES = {
             },
             {
                 name: "memory-delete",
-                description: "Delete a memory",
+                description: "Soft-delete a memory entry by its UUID.",
                 inputSchema: {
                     type: "object",
                     properties: {
-                        id: { type: "string", description: "UUID of the memory" }
+                        id: { type: "string", format: "uuid" }
                     },
                     required: ["id"]
                 }
             },
             {
                 name: "memory-search",
-                description: "Search memories",
+                description: "Search for memories with hierarchical resolution and filtering.",
                 inputSchema: {
                     type: "object",
                     properties: {
-                        repository: { type: "string" },
-                        organization: { type: "string" },
                         query: { type: "string" },
-                        filters: { type: "object" }
+                        filters: {
+                            type: "object",
+                            properties: {
+                                repository: { type: "string" },
+                                memory_type: { type: "string", enum: ["business_rule", "decision_log", "preference", "system_constraint", "documentation", "tech_stack", "fact", "task", "architecture", "user_context", "convention", "risk"] },
+                                status: { type: "string", enum: ["draft", "verified", "locked", "deprecated", "active"] },
+                                scope_type: { type: "string", enum: ["system", "organization", "repository", "user"] },
+                                metadata: { type: "object" }
+                            }
+                        }
                     }
                 }
             },
             {
-                name: "memory-bulk-write",
-                description: "Create/update multiple memories",
-                inputSchema: {
-                    type: "object",
-                    properties: {
-                        items: {
-                            type: "array",
-                            items: {
-                                type: "object",
-                                properties: {
-                                    organization: { type: "string" },
-                                    scope_type: { type: "string" },
-                                    memory_type: { type: "string" },
-                                    current_content: { type: "string" },
-                                    repository: { type: "string" },
-                                    user_id: { type: "string" },
-                                    title: { type: "string" },
-                                    status: { type: "string" },
-                                    metadata: { type: "object" },
-                                    created_by_type: { type: "string" }
-                                },
-                                required: ["organization", "scope_type", "memory_type", "current_content"]
-                            }
-                        }
-                    },
-                    required: ["items"]
-                }
-            },
-            {
                 name: "memory-link",
-                description: "Create Knowledge Graph relationships",
+                description: "Create relationships between memories.",
                 inputSchema: {
                     type: "object",
                     properties: {
-                        source_id: { type: "string", description: "UUID of the source memory" },
-                        target_id: { type: "string", description: "UUID of the target memory" },
+                        source_id: { type: "string", format: "uuid" },
+                        target_id: { type: "string", format: "uuid" },
                         relation_type: { type: "string", default: "related" }
                     },
                     required: ["source_id", "target_id"]
-                }
-            },
-            {
-                name: "memory-vector-search",
-                description: "Semantic search using vectors",
-                inputSchema: {
-                    type: "object",
-                    properties: {
-                        vector: { type: "array", items: { type: "number" }, description: "Array of floats" },
-                        threshold: { type: "number", default: 0.5 },
-                        repository: { type: "string" },
-                        filters: { type: "object" }
-                    },
-                    required: ["vector"]
                 }
             }
         ],
@@ -173,14 +140,9 @@ const CAPABILITIES = {
         ],
         resourceTemplates: [
             {
-                uriTemplate: "memory://{id}",
-                name: "memory",
-                description: "Read a specific memory by ID"
-            },
-            {
-                uriTemplate: "memory-history://{id}",
-                name: "memory-history",
-                description: "Read history of a memory"
+                uriTemplate: "memory://index",
+                name: "Memory Index",
+                description: "Discovery endpoint - lightweight list of 50 most recent memories (excludes current_content)"
             }
         ]
     }
@@ -199,14 +161,20 @@ rl.on("line", async (line) => {
                 result: {
                     capabilities: CAPABILITIES.capabilities,
                     serverInfo: CAPABILITIES.serverInfo,
-                    protocolVersion: "2024-11-05" // Spec version
+                    protocolVersion: "2024-11-05"
                 }
             };
             process.stdout.write(JSON.stringify(response) + "\n");
+            // Send initialized notification
+            process.stdout.write(JSON.stringify({
+                jsonrpc: "2.0",
+                method: "notifications/initialized",
+                params: {}
+            }) + "\n");
             return;
         }
 
-        // Initialize initialized
+        // Handle incoming initialized notification (no-op)
         if (msg.method === "notifications/initialized") {
             return;
         }
@@ -240,22 +208,23 @@ rl.on("line", async (line) => {
 
         async function forwardToMCP(method, params, id) {
             const url = process.env.MCP_MEMORY_URL || DEFAULT_URL;
-            const token = process.env.MCP_MEMORY_TOKEN || "";
+            const token = process.env.MCP_MEMORY_TOKEN;
 
             if (!token) {
-                process.stderr.write("Error: MCP_MEMORY_TOKEN is missing in environment\n");
+                const error = { code: -32000, message: "MCP_MEMORY_TOKEN is required but missing from environment" };
+                process.stderr.write("FATAL: MCP_MEMORY_TOKEN is missing in environment\n");
+                process.stdout.write(
+                    JSON.stringify({ jsonrpc: "2.0", id, error }) + "\n"
+                );
+                return;
             }
 
-            let result = null,
-                error = null;
             try {
                 const headers = {
                     "Content-Type": "application/json",
-                    Accept: "application/json"
+                    Accept: "application/json",
+                    "Authorization": `Bearer ${token}`
                 };
-                if (token) headers["Authorization"] = `Bearer ${token}`;
-
-                process.stderr.write(`Forwarding ${method} to ${url}\n`);
 
                 const res = await fetch(url, {
                     method: "POST",
@@ -264,34 +233,35 @@ rl.on("line", async (line) => {
                 });
 
                 const text = await res.text();
-                process.stderr.write(`Remote response status: ${res.status}\n`);
-
                 let data = null;
                 try {
                     data = JSON.parse(text);
                 } catch (e) {
                     process.stderr.write(`Failed to parse remote response: ${text.substring(0, 500)}\n`);
-                    error = { code: -32000, message: "Invalid JSON response from server" };
+                    const error = { code: -32700, message: "Parse error: Invalid JSON from server" };
+                    process.stdout.write(
+                        JSON.stringify({ jsonrpc: "2.0", id, error }) + "\n"
+                    );
+                    return;
                 }
 
-                if (!error) {
-                    if (!res.ok) {
-                        const message = (data && (data.message || data.error?.message)) || "HTTP error";
-                        const code = res.status || data?.error?.code || -32001;
-                        process.stderr.write(`Remote error: ${message} (code: ${code})\n`);
-                        error = { code, message };
-                    } else {
-                        result = data?.result ?? null;
-                        error = data?.error ?? null;
-                    }
+                // Forward the exact JSON-RPC envelope from server without mutation
+                if (data.jsonrpc === "2.0" && data.id === id) {
+                    process.stdout.write(JSON.stringify(data) + "\n");
+                } else {
+                    // Server returned malformed JSON-RPC - wrap it
+                    process.stderr.write(`Server response missing JSON-RPC envelope\n`);
+                    process.stdout.write(
+                        JSON.stringify({ jsonrpc: "2.0", id, result: data }) + "\n"
+                    );
                 }
             } catch (e) {
                 process.stderr.write(`Forwarding failed: ${e.message}\n`);
-                error = { code: -32002, message: e.message };
+                const error = { code: -32603, message: `Internal error: ${e.message}` };
+                process.stdout.write(
+                    JSON.stringify({ jsonrpc: "2.0", id, error }) + "\n"
+                );
             }
-            process.stdout.write(
-                JSON.stringify({ jsonrpc: "2.0", id, ...(error ? { error } : { result }) }) + "\n"
-            );
         }
 
         // Forward any JSON-RPC method other than initialize as-is
