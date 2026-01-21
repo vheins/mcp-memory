@@ -288,7 +288,30 @@ const CAPABILITIES = {
             }
         ],
         resources: [
-            // No static resources defined in tests, but capability is there
+            {
+                uri: "memory://index",
+                title: "Memory Index (sample)",
+                description: "Sample lightweight index entry for discovery; real server returns dynamic results.",
+                preview: { count: 10 }
+            },
+            {
+                uri: "memory://123e4567-e89b-12d3-a456-426614174000",
+                title: "Example Memory (sample)",
+                description: "Example individual memory instance for local discovery and tests.",
+                preview: { title: "Example Memory", snippet: "This is a sample memory used for testing." }
+            },
+            {
+                uri: "docs://getting-started",
+                title: "Getting Started",
+                description: "Quickstart documentation for using the Memory MCP client and server.",
+                preview: { slug: "getting-started" }
+            },
+            {
+                uri: "schema://mcp",
+                title: "MCP Schema",
+                description: "Machine-readable schema describing tools, prompts and resources.",
+                preview: { version: "1.0.0" }
+            }
         ],
         resourceTemplates: [
             {
@@ -310,6 +333,11 @@ const CAPABILITIES = {
                 uriTemplate: "docs://{slug}",
                 name: "MCP Documentation",
                 description: "Essential documentation for using this MCP server correctly."
+            },
+            {
+                uriTemplate: "schema://mcp",
+                name: "MCP Schema",
+                description: "Schema endpoint exposing resource/tool/prompt schemas for clients and validators."
             }
         ]
     }
@@ -384,6 +412,39 @@ rl.on("line", async (line) => {
                 }) + "\n"
             );
             return;
+        }
+
+        // Return a single prompt by name (local cache) to help agents fetch full prompt text quickly
+        if (msg.method === "prompts/get") {
+            const name = msg.params && msg.params.name;
+            const prompt = CAPABILITIES.result.prompts.find(p => p.name === name);
+            if (prompt) {
+                process.stdout.write(
+                    JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { prompt } }) + "\n"
+                );
+                return;
+            }
+            // fall through to remote forward if not found locally
+        }
+
+        // Advertise static resources to the agent and allow reading them locally
+        if (msg.method === "resources/list") {
+            process.stdout.write(
+                JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { resources: CAPABILITIES.result.resources } }) + "\n"
+            );
+            return;
+        }
+
+        if (msg.method === "resources/read") {
+            const uri = msg.params && msg.params.uri;
+            const resource = CAPABILITIES.result.resources.find(r => r.uri === uri);
+            if (resource) {
+                process.stdout.write(
+                    JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { resource } }) + "\n"
+                );
+                return;
+            }
+            // fallback to remote for dynamic resources
         }
 
         async function forwardToMCP(method, params, id) {
