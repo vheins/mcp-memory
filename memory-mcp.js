@@ -264,6 +264,27 @@ const CAPABILITIES = {
                     },
                     required: ["vector"]
                 }
+            },
+            {
+                name: "memory-audit",
+                description: "Retrieve version history and audit logs for a memory.",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        id: { type: "string", format: "uuid", description: "The UUID of the memory to fetch history for." }
+                    },
+                    required: ["id"]
+                }
+            },
+            {
+                name: "memory-index",
+                description: "Lightweight discovery index of recent memories (metadata-only).",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        // no params required for index listing; optional pagination/filtering may be supported server-side
+                    }
+                }
             }
         ],
         resources: [
@@ -431,4 +452,3 @@ rl.on("line", async (line) => {
         process.stderr.write(`Parse error: ${e.message}\n`);
     }
 });
-
