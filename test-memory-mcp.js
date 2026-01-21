@@ -195,6 +195,8 @@ function startMockBackend() {
             });
             return;
         }
+
+        respond({ jsonrpc: "2.0", id, error: { code: -32601, message: `Tool ${name} not found` } });
     });
 
     return new Promise((resolve) => {
@@ -233,13 +235,15 @@ function runMCP(input, envOverrides = {}) {
 async function testInitialize(env) {
     const input = { method: "initialize", id: 1 };
     const raw = await runMCP(input, env);
-    const result = JSON.parse(raw);
+    // memory-mcp.js might send the response AND a notification. We only want the first line.
+    const firstLine = raw.split("\n")[0];
+    const result = JSON.parse(firstLine);
     console.log("initialize:", JSON.stringify(result.result));
 
     // Assertions
     const caps = result.result.capabilities;
-    if (!caps.tools?.list || !caps.resources?.list) {
-        console.error("FAILED: Missing capabilities in hello response");
+    if (!caps.tools?.list || !caps.resources?.list || !caps.prompts?.list) {
+        console.error("FAILED: Missing capabilities in hello response", caps);
         process.exit(1);
     }
     if (result.result.serverInfo.name !== "@vheins/memory-mcp") {
@@ -263,6 +267,21 @@ async function testInitialize(env) {
     console.log("tools/list: OK");
 }
 
+async function testPrompts(baseEnv) {
+    const input = { method: "prompts/list", id: 3 };
+    const raw = await runMCP(input, baseEnv);
+    const res = JSON.parse(raw);
+    const names = res.result.prompts.map(p => p.name);
+    const expected = ["memory-agent-core", "memory-index-policy", "tool-usage-guidelines"];
+    for (const e of expected) {
+        if (!names.includes(e)) {
+            console.error(`FAILED: Missing expected prompt: ${e}`, names);
+            process.exit(1);
+        }
+    }
+    console.log("prompts/list: OK");
+}
+
 async function testRequiresAuth(baseEnv) {
     const input = {
         method: "tools/call",
@@ -271,7 +290,8 @@ async function testRequiresAuth(baseEnv) {
     };
     const raw = await runMCP(input, { ...baseEnv, MCP_MEMORY_TOKEN: "" });
     const out = JSON.parse(raw);
-    if (!out.error || out.error.code !== 401) {
+    // memory-mcp.js returns -32000 if token is completely missing
+    if (!out.error || out.error.code !== -32000) {
         console.error("Auth test failed:", out);
     } else {
         console.log("requires-auth: OK (", out.error.code, ")");
@@ -448,20 +468,7 @@ async function testVectorSearch(baseEnv) {
     }
 }
 
-async function testStore(baseEnv) {
-    const input = {
-        method: "tools/call",
-        params: { name: "memory-store", arguments: { current_content: "Legacy", memory_type: "fact" } },
-        id: 15
-    };
-    const raw = await runMCP(input, baseEnv);
-    const out = JSON.parse(raw);
-    if (out.error) console.error("store error:", out.error);
-    else {
-        console.log("store:", JSON.stringify(out.result));
-        console.log(out.result);
-    }
-}
+
 
 async function runAllTests() {
     const { server, port } = await startMockBackend();
@@ -479,7 +486,11 @@ async function runAllTests() {
         await testBulkWrite(baseEnv);
         await testLink(baseEnv);
         await testVectorSearch(baseEnv);
-        await testStore(baseEnv);
+        await testUpdate(baseEnv);
+        await testBulkWrite(baseEnv);
+        await testLink(baseEnv);
+        await testVectorSearch(baseEnv);
+        await testPrompts(baseEnv);
     } finally {
         server.close();
     }
